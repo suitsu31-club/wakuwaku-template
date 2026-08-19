@@ -1,1 +1,1 @@
-# wakuwaku-template
+# Template Repository For `wakuwaku` Framework
