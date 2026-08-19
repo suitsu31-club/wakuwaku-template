@@ -21,19 +21,24 @@ Do not invent parallel abstractions.
 ## Workspace layout
 
 ```
-bin/          # binaries — wiring only, no business logic
+bin/          # Rust binaries — wiring only, no business logic
   app-server/     # runs modules behind pluggable workers (gRPC, consumer, cron, ...)
   manage-tool/    # CLI: migrations, config seeding, admin tasks
 lib/
-  app_protobuf/   # generated gRPC/protobuf types + shared conversions
+  app_protobuf/   # generated gRPC/protobuf types + shared conversions (Rust)
 modules/          # business logic, one crate per feature
   base/           # foundational + template module
-proto/            # protobuf definitions (grouped by module)
+proto/            # protobuf definitions (grouped by module) — the single API source
 migrations/       # SQLx migrations (.up.sql / .down.sql)
+typescript/       # Bun workspace: all frontend / TypeScript packages
+  app-protobuf/   # generated gRPC/protobuf TypeScript code (shared)
+package.json      # root of the Bun workspace (workspaces: ["typescript/*"])
 ```
 
-Binaries live under `bin/`. Do **not** place binary crates at the repository
-root.
+Rust binaries live under `bin/` — do **not** place binary crates at the
+repository root. All TypeScript/JavaScript packages live under `typescript/`
+and are managed as a single Bun workspace — do **not** create standalone,
+unlinked npm/pnpm projects.
 
 ## Anatomy of a module
 
@@ -137,8 +142,10 @@ src/
   module may depend on `base` (and on shared modules), but `base` must not depend
   on a feature module, and modules must not depend on each other's internals —
   communicate via gRPC or AMQP events.
-- **Protobuf:** add `.proto` files under `proto/`, register them in
-  `app_protobuf`'s `build.rs`, and re-export the generated package there.
+- **Protobuf:** `proto/` is the single source of truth for the API. Add `.proto`
+  files there, register them in `app_protobuf`'s `build.rs` (Rust side), and
+  regenerate the TypeScript side with `bun run generate:proto`. Never hand-edit
+  or duplicate generated code.
 - **Migrations:** every schema change is a pair of `.up.sql` / `.down.sql` files
   in `migrations/`.
 
@@ -151,3 +158,44 @@ src/
 4. Implement, from the inside out: `entities` → `services` → `rpc`/`hooks`.
 5. Wire the new services/hooks into `bin/app-server`'s workers.
 6. Keep `config` values seedable from `bin/manage-tool`.
+
+## Frontend / TypeScript
+
+All TypeScript lives under `typescript/` as one **Bun workspace** (the root
+`package.json` declares `workspaces: ["typescript/*"]`). Use **Bun** for
+everything — install, scripts, running — not npm or pnpm.
+
+### `app-protobuf` — generated API code, shared once
+
+`typescript/app-protobuf` is the TypeScript counterpart of the `app_protobuf`
+Rust crate: it holds the gRPC/protobuf code generated from `proto/`, and
+**nothing else**. Every frontend package depends on `app-protobuf` instead of
+generating (and duplicating) its own client — this is the whole point of the
+workspace.
+
+- Codegen is driven by `typescript/app-protobuf/generate-proto.sh`, exposed as
+  the `generate:proto` script. Run it from the repo root:
+
+  ```sh
+  bun install            # once, to fetch the toolchain (grpc-tools, ts-proto)
+  bun run generate:proto # regenerate after any change to proto/
+  ```
+
+- Output lands in `typescript/app-protobuf/src/generated/` (emptied and
+  rewritten on every run — never edit it by hand or commit changes into it
+  manually). The template ships this directory empty.
+- The package exposes generated modules by subpath, mirroring the proto tree:
+
+  ```ts
+  import { GreeterDefinition } from "app-protobuf/sample/hello";
+  ```
+
+### Adding a frontend package
+
+1. Create it under `typescript/<name>/` with its own `package.json`; the Bun
+   workspace picks it up automatically.
+2. Add `"app-protobuf": "workspace:*"` to its dependencies and import the
+   generated types from there — do **not** re-run protoc inside the package.
+3. Keep generated code, gRPC clients, and other shared TypeScript in dedicated
+   workspace packages so each concern has exactly one home, just like the Rust
+   side.
