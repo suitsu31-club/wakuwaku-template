@@ -118,7 +118,7 @@ dependencies = [
  "app_protobuf",
  "axum",
  "base",
- "kanau 0.6.0",
+ "kanau",
  "opentelemetry 0.33.0",
  "opentelemetry-appender-tracing",
  "opentelemetry-otlp",
@@ -276,7 +276,7 @@ dependencies = [
  "bytes",
  "compact_str",
  "itertools 0.15.0",
- "kanau 0.6.0",
+ "kanau",
  "prost",
  "prost-types",
  "redis",
@@ -577,15 +577,6 @@ dependencies = [
  "sqlx",
  "static_assertions",
  "zmij",
-]
-
-[[package]]
-name = "convert_case"
-version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "baaaa0ecca5b51987b9423ccdc971514dd8b0bb7b4060b983d3664dad3f1f89f"
-dependencies = [
- "unicode-segmentation",
 ]
 
 [[package]]
@@ -1346,20 +1337,6 @@ dependencies = [
 
 [[package]]
 name = "kanau"
-version = "0.5.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d84a4cb99093a2c0f20ac0dbf1784d1a18291150f2ffb9359e72f36765f13874"
-dependencies = [
- "anyhow",
- "futures",
- "kanau-macro 0.1.0",
- "thiserror",
- "tokio",
- "tokio-stream",
-]
-
-[[package]]
-name = "kanau"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3cedf7ef16cd6cb58af505ee3f340e8c5751d216865ed877aaf7a4537cfad538"
@@ -1367,26 +1344,13 @@ dependencies = [
  "anyhow",
  "bincode",
  "futures",
- "kanau-macro 0.2.0",
+ "kanau-macro",
  "rkyv 0.8.18",
  "serde",
  "serde_json",
  "thiserror",
  "tokio",
  "tokio-stream",
-]
-
-[[package]]
-name = "kanau-macro"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d39705f0cf94b1adf34d1899d68fef74c585cadb96103079f887fac4e27377f6"
-dependencies = [
- "convert_case",
- "proc-macro2",
- "quote",
- "regex",
- "syn 2.0.119",
 ]
 
 [[package]]
@@ -1456,7 +1420,7 @@ version = "0.1.0-alpha"
 dependencies = [
  "base",
  "clap",
- "kanau 0.6.0",
+ "kanau",
  "redis",
  "serde",
  "serde_json",
@@ -3202,12 +3166,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7df058c713841ad818f1dc5d3fd88063241cc61f49f5fbea4b951e8cf5a8d71d"
 
 [[package]]
-name = "unicode-segmentation"
-version = "1.13.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c6f5d3c3b1bf09027a88a6bc961fc00497d651009560b5463668dc81b0fa87a8"
-
-[[package]]
 name = "untrusted"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3291,14 +3249,14 @@ checksum = "051eb1abcf10076295e815102942cc58f9d5e3b4560e46e53c21e8ff6f3af7b1"
 
 [[package]]
 name = "wakuwaku"
-version = "0.2.2"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e30e04982417dc3a6aa9be2dbd9e1e1e356454586e7b73d9334ee994b652b99e"
+checksum = "27c2dd50fdfcfa418de1684028ca50a34e779ffe7d3198249337bbcca088d8af"
 dependencies = [
  "amqprs",
  "anyhow",
  "crossbeam-queue",
- "kanau 0.5.2",
+ "kanau",
  "redis",
  "sqlx",
  "thiserror",
