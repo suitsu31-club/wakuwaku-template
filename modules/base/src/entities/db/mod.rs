@@ -1,20 +1,35 @@
 //! PostgreSQL entities and queries.
 //!
-//! Put your database row structs and query/command processors here — one
-//! submodule per table or aggregate (e.g. `pub mod user_account;`).
+//! Put your database row structs and queries here — one submodule per table or
+//! aggregate (e.g. `pub mod user_account;`).
 //!
-//! The convention: define a `sqlx::FromRow` struct for the row, then model each
-//! read or write as an input struct with a `Processor` implementation on the
-//! shared `DatabaseProcessor` from `wakuwaku::sqlx`. Prefer the
-//! `sqlx::query!`/`query_as!` macros so queries are checked against the database
-//! at compile time.
+//! The convention (`wakuwaku::entity`):
+//!
+//! - declare the table as an [`Entity`](wakuwaku::entity::Entity) marker type;
+//! - define a `sqlx::FromRow` struct for the row;
+//! - model each read or write as an input struct implementing
+//!   [`Query`](wakuwaku::entity::Query) (its effect: `Read<T>` / `Write<T>`)
+//!   and [`Execute<PgSource>`](wakuwaku::entity::Execute) (how it runs on a
+//!   PostgreSQL connection, failing with `sqlx::Error`).
+//!
+//! A query is run by a capability-typed handle,
+//! `Db<PgSource, ReadOnly | ReadWrite>`, which implements `Processor<Q>` for
+//! every query its capability covers: `db.process(FindExampleById { id })`.
+//! Sending a write query to a `ReadOnly` handle does not compile. Prefer the
+//! `sqlx::query!`/`query_as!` macros so queries are checked against the
+//! database at compile time.
 //!
 //! ```ignore
-//! use kanau::processor::Processor;
-//! use wakuwaku::sqlx::DatabaseProcessor;
+//! use sqlx::PgConnection;
+//! use wakuwaku::entity::sqlx::backend::PgSource;
+//! use wakuwaku::entity::{Entity, Execute, Query, Read};
+//!
+//! /// The `base.example` table.
+//! pub struct Example;
+//! impl Entity for Example {}
 //!
 //! #[derive(Debug, Clone, sqlx::FromRow)]
-//! pub struct Example {
+//! pub struct ExampleRow {
 //!     pub id: uuid::Uuid,
 //!     pub name: String,
 //! }
@@ -23,16 +38,22 @@
 //!     pub id: uuid::Uuid,
 //! }
 //!
-//! impl Processor<FindExampleById> for DatabaseProcessor {
-//!     type Output = Option<Example>;
+//! impl Query for FindExampleById {
+//!     type Effect = Read<Example>;
+//! }
+//!
+//! impl Execute<PgSource> for FindExampleById {
+//!     type Output = Option<ExampleRow>;
 //!     type Error = sqlx::Error;
-//!     async fn process(&self, input: FindExampleById) -> Result<Self::Output, Self::Error> {
+//!
+//!     #[tracing::instrument(skip_all, err)]
+//!     async fn execute(self, conn: &mut PgConnection) -> Result<Self::Output, Self::Error> {
 //!         sqlx::query_as!(
-//!             Example,
+//!             ExampleRow,
 //!             r#"SELECT id, name FROM "base"."example" WHERE id = $1"#,
-//!             input.id
+//!             self.id
 //!         )
-//!         .fetch_optional(self.db())
+//!         .fetch_optional(conn)
 //!         .await
 //!     }
 //! }

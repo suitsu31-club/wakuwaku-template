@@ -10,17 +10,28 @@ license = "MIT"
 
 [workspace.dependencies]
 # Runtime
-tokio = { version = "1.49", features = ["full"] }
+tokio = { version = "1.53", features = ["full"] }
 
 # Framework
-wakuwaku = { version = "0.3", features = ["tracing-otel", "tonic", "sqlx", "amqprs"] }
+# PostgreSQL stays the default database (`sqlx-pg`); events go through Apache Iggy.
+# The crates wakuwaku exposes are reachable as `wakuwaku::deps::*`. `kanau`,
+# `sqlx`, `redis` and `tonic` are also direct dependencies below, only because
+# derive macros / generated code name them by path and we enable extra
+# features on them. Keep their requirements semver-compatible with wakuwaku's
+# so Cargo resolves a single copy (`cargo tree -i sqlx` must list one).
+wakuwaku = { version = "1.0.0-rc3", features = ["iggy", "sqlx-pg", "redis"] }
 kanau = { version = "0.6", features = [
     "message",
     "rkyv",
     "bincode",
     "serde_json",
 ] }
-amqprs = { version = "2.1", features = ["uriparse", "urispec"] }
+
+# Errors
+thiserror = "2"
+anyhow = "1"
+
+# Persistence
 sqlx = { version = "0.9", features = [
     "runtime-tokio",
     "tls-rustls",

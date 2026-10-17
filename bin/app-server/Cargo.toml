@@ -17,11 +17,11 @@ tokio = { workspace = true }
 wakuwaku = { workspace = true }
 kanau = { workspace = true }
 
-# Workers: gRPC / REST / AMQP
+# Workers: gRPC / REST / Iggy consumer / cron
+# (Iggy is reached through `wakuwaku::deps::iggy`.)
 tonic = { workspace = true }
 axum = { workspace = true }
 tower = { workspace = true }
-amqprs = { workspace = true }
 
 # Shared dependencies
 sqlx = { workspace = true }

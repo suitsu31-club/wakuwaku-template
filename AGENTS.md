@@ -13,10 +13,17 @@ async function*:
 Processor = State + async fn(Input) -> Result<Output, Error>
 ```
 
-A `Processor` is a `Clone`-able struct that owns its dependencies and implements
-`Processor<Input>` once per operation. Model each database query, each business
-operation, and each queue consumer as an input struct plus a `Processor` impl.
-Do not invent parallel abstractions.
+A `Processor` is a struct that owns its dependencies and implements
+`Processor<Input>` once per operation. Model each business operation and each
+cron job as an input plus a `Processor` impl. wakuwaku 1.0 builds its own
+layers on the same idea — use them, do not invent parallel abstractions:
+
+- a **query** is an input struct implementing `wakuwaku::entity::Query` +
+  `Execute<Source>`; a capability-typed `Db<Source, Capability>` handle runs it
+  as a `Processor` (`db.process(query)`);
+- an **event handler** implements `wakuwaku::iggy::EventHandler<E>`, which
+  receives a run of events instead of one input;
+- a **cron job** is a `Processor<CronTick>` plus `wakuwaku::CronJob`.
 
 ## Workspace layout
 
@@ -47,14 +54,15 @@ Every module crate mirrors `modules/base`:
 ```
 src/
 ├── lib.rs        # declares the modules below; sets crate-wide lints
+├── error.rs      # (base) the shared `Error` services and hooks return
 ├── config.rs     # typed configuration (stored in DB, cached in Redis)
 ├── utils/        # small, dependency-light helpers
 ├── entities/     # persistence layer
-│   ├── db/       # PostgreSQL rows + compile-time-checked queries
-│   └── redis/    # Redis key/value types (rkyv-encoded)
+│   ├── db/       # PostgreSQL entities + compile-time-checked queries
+│   └── redis/    # Redis collections (Cache, Lock, …) + queries (rkyv bodies)
 ├── services/     # business logic (stateful Processors)
-├── events/       # AMQP payloads + routing
-├── hooks/        # background reactors (consumers, cron, loggers)
+├── events/       # Apache Iggy events: partition keys + event types
+├── hooks/        # background reactors (Iggy event handlers, cron, loggers)
 └── rpc/          # gRPC service implementations (transport edge)
 ```
 
@@ -76,44 +84,68 @@ src/
 ### `entities/db`
 
 - One submodule per table or aggregate.
-- Define a `sqlx::FromRow` struct for the row.
-- Implement `Processor<Input>` for `wakuwaku::sqlx::DatabaseProcessor`, one impl
-  per query/command.
+- Declare the table as a `wakuwaku::entity::Entity` marker type and define a
+  `sqlx::FromRow` struct for the row.
+- One input struct per query/command, implementing `Query` (its effect:
+  `Read<T>` / `Write<T>`, or a tuple of them) and `Execute<PgSource>` (the SQL,
+  run on `&mut PgConnection`, failing with `sqlx::Error`).
 - Use `sqlx::query!` / `query_as!` so queries are checked against the database at
   compile time. Prefer schema-qualified table names.
-- Annotate impls with `#[tracing::instrument]`.
+- Annotate `execute` with `#[tracing::instrument(skip_all, err)]`.
+- Several statements that must commit together are a transaction flow
+  (`wakuwaku::entity::sqlx::transaction`), not hand-written BEGIN/COMMIT.
 
 ### `entities/redis`
 
 - One submodule per key kind.
-- Define a value type and a key type; derive the `rkyv` traits.
-- Implement `KeyValue` + `KeyValueRead` + `KeyValueWrite` from
-  `wakuwaku::redis`.
+- Prefer the typed collections in `wakuwaku::entity::redis::collection`
+  (`Cache`, `HashedCache`, `Lock`, `RwLock`, `TokenBucket`), declared as
+  `const` values with a namespace prefixed by the module name.
+- Bodies derive the `rkyv` traits plus `RkyvMessageSer` / `RkyvMessageDe`; key
+  types implement `wakuwaku::entity::redis::Name`.
+- Anything the collections don't cover is a query: `Query` +
+  `Execute<RedisSource<C>>`, failing with `redis::RedisError`.
 
 ### `services`
 
-- A service is a `Clone` struct owning its dependencies (database, Redis, AMQP,
-  loaded config, other services).
-- One `Processor` impl per operation; return domain types, not protobuf types.
+- A service is a `Clone` struct owning its dependencies (`Db` handles for
+  PostgreSQL/Redis, the Iggy `Publisher`, loaded config, other services).
+- Take the narrowest capability: `Db<_, ReadOnly>` when the service only reads.
+- One `Processor` impl per operation, failing with `base::Error`; return
+  domain types, not protobuf types.
 - Load config with the config-cache helpers, not by re-reading the database on
   every call.
 - Services orchestrate entities and publish events. **No transport types here.**
 
 ### `events`
 
-- Define the payload, derive the `rkyv` traits, and implement `AmqpRouting`
-  (`EXCHANGE`, `EXCHANGE_TYPE`, `ROUTING_KEY`) + `AmqpMessageSend`.
+- Implement `wakuwaku::iggy::PartitionKey` on the key type: the thing whose
+  events must stay in order. Its `SUPER_PARTITION_NAME` is the Iggy topic,
+  prefixed with the module name (e.g. `base_example`).
+- Implement `Event` on the payload: a `TYPE_TAG` unique within the topic
+  (never renumbered or reused), `key()`, `atomic_ordering()`, and an `Algebra`
+  (`NonAssociative` when in doubt). Derive the `rkyv` traits plus
+  `RkyvMessageSer` / `RkyvMessageDe`, and `impl EventBody`.
 - Document each event's contract in a doc comment: **who publishes, who
-  consumes, and the routing key.**
+  consumes, its topic and type tag.**
 - Events are the *only* sanctioned way for modules to communicate
   asynchronously.
+- wakuwaku does not create the stream or main topics; `manage-tool` provisions
+  them (it creates only `retry_<topic>`).
 
 ### `hooks`
 
-- AMQP consumers implement `AmqpMessageProcessor<E>` (with a durable `QUEUE`
-  name) plus `Processor<E>`.
-- Also the home for cron jobs and event loggers.
-- Like services, hooks own their dependencies and carry no transport logic.
+- Iggy event handlers implement `EventHandler<E>` (with `MAX_BATCH`). Delivery
+  is at least once: handlers must be idempotent.
+- One consumer (one `consumer_name`) per topic: register every handler of a
+  topic in the same `iggy_consumer` chain.
+- Cron jobs implement `Processor<CronTick>` + `CronJob`. Every replica runs
+  them, so make them idempotent or take a Redis `Lock`. Read the time from
+  `tick.fired_at`.
+- Also the home for event loggers.
+- Implement `wakuwaku::ServiceCreation` so `app-server` can build the hook from
+  its `ServiceBuilder`. Like services, hooks own their dependencies and carry
+  no transport logic.
 
 ### `rpc`
 
@@ -131,9 +163,12 @@ src/
 
 ## Cross-cutting conventions
 
-- **Errors:** use `wakuwaku::Error` at the service/hook boundary; `sqlx::Error`
-  is fine inside `entities/db`. Define module-specific error enums with
-  `thiserror` when a layer needs richer variants.
+- **Errors:** wakuwaku 1.0 has no `wakuwaku::Error`. Services and hooks return
+  `base::Error` (`modules/base/src/error.rs`); it converts into `tonic::Status`
+  for `rpc` and into the Iggy `HandleError` (choosing its retry class) for
+  hooks. Queries keep their native error (`sqlx::Error`, `RedisError`) and `?`
+  lifts it. Add a variant to `base::Error` only when every module needs it;
+  otherwise define the module's own `thiserror` enum the same way.
 - **Lints:** keep the crate-level `#![deny(clippy::unwrap_used)]`,
   `expect_used`, and `panic` lints. No panics on the request path.
 - **Tracing:** instrument entities, services, and RPC handlers with
@@ -141,7 +176,12 @@ src/
 - **Dependency direction:** `rpc → services → entities/events/config`. A feature
   module may depend on `base` (and on shared modules), but `base` must not depend
   on a feature module, and modules must not depend on each other's internals —
-  communicate via gRPC or AMQP events.
+  communicate via gRPC or Iggy events.
+- **Third-party crates:** reach crates in wakuwaku's API through
+  `wakuwaku::deps` (`iggy` only that way). `kanau`, `sqlx`, `redis`, and `tonic`
+  are also direct workspace dependencies because derive macros and generated
+  code name them by path and we enable extra features; keep their versions
+  semver-compatible with wakuwaku's so one copy is resolved.
 - **Protobuf:** `proto/` is the single source of truth for the API. Add `.proto`
   files there, register them in `app_protobuf`'s `build.rs` (Rust side), and
   regenerate the TypeScript side with `bun run generate:proto`. Never hand-edit

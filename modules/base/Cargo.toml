@@ -18,8 +18,9 @@ tokio = { workspace = true }
 sqlx = { workspace = true }
 redis = { workspace = true }
 
-# Messaging
-amqprs = { workspace = true }
+# Errors
+thiserror = { workspace = true }
+anyhow = { workspace = true }
 
 # gRPC / transport
 tonic = { workspace = true }

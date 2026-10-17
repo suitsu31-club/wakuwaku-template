@@ -2,9 +2,9 @@
 
 `base` is the reference and shared module of the workspace. It serves two roles:
 
-1. **Shared library.** It holds the entities, config primitives, and utilities
-   that more than one module needs, so feature modules depend on `base` instead
-   of duplicating them.
+1. **Shared library.** It holds the entities, config primitives, utilities,
+   and the shared `Error` type that more than one module needs, so feature
+   modules depend on `base` instead of duplicating them.
 2. **Template.** Its directory layout is the layout **every** module follows.
    To add a feature, copy this structure into a new `modules/<name>` crate.
 
@@ -13,14 +13,15 @@
 ```
 src/
 ├── lib.rs          # crate root: declares the modules below
+├── error.rs        # the shared `Error` (→ tonic::Status, → Iggy HandleError)
 ├── config.rs       # strongly typed module configuration (DB-backed, Redis-cached)
 ├── utils/          # small, dependency-light helpers
 ├── entities/       # persistence layer
-│   ├── db/         # PostgreSQL rows + compile-time-checked queries
-│   └── redis/      # Redis key/value types (rkyv-encoded)
+│   ├── db/         # PostgreSQL entities + compile-time-checked queries
+│   └── redis/      # Redis collections + queries (rkyv-encoded bodies)
 ├── services/       # business logic (stateful Processors)
-├── events/         # AMQP message payloads + routing
-├── hooks/          # background reactors: consumers, cron, event loggers
+├── events/         # Apache Iggy events: partition keys + event types
+├── hooks/          # background reactors: Iggy event handlers, cron, event loggers
 └── rpc/            # gRPC service implementations (the transport edge)
 ```
 
@@ -33,15 +34,17 @@ function*:
 Processor = State + async fn(Input) -> Result<Output, Error>
 ```
 
-A processor is a `Clone`-able struct that owns its dependencies and implements
+A processor is a struct that owns its dependencies and implements
 `Processor<Input>` once per operation. The same abstraction is used everywhere:
 
-- **Entities** implement `Processor` on `wakuwaku::sqlx::DatabaseProcessor` (for
-  database work) or on their own type (for Redis).
-- **Services** implement `Processor` on a service struct that owns the database,
-  Redis, message queue, and any collaborating services.
-- **Hooks** implement `Processor` (plus `AmqpMessageProcessor`) to consume
-  events off the queue.
+- **Entities** are query values (`wakuwaku::entity::Query` + `Execute`). A
+  capability-typed `Db<PgSource | RedisSource, ReadOnly | ReadWrite>` handle
+  runs them as a `Processor`, and refuses (at compile time) to run a write
+  through a read-only handle.
+- **Services** implement `Processor` on a service struct that owns its `Db`
+  handles, the Iggy `Publisher`, and any collaborating services.
+- **Hooks** implement `wakuwaku::iggy::EventHandler` to consume events from
+  Iggy, or `Processor<CronTick>` + `wakuwaku::CronJob` for periodic work.
 
 This keeps each unit small, individually testable, and trivially composable.
 
@@ -50,7 +53,7 @@ This keeps each unit small, individually testable, and trivially composable.
 ```
 gRPC request ──► rpc ──► services ──► entities ──► PostgreSQL / Redis
                             │
-                            └─► events ──► AMQP ──► hooks (this or another module)
+                            └─► events ──► Iggy ──► hooks (this or another module)
 ```
 
 ## Dependency direction

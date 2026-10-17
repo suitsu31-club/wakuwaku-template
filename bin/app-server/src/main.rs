@@ -7,8 +7,8 @@
 //! variables). Common modes are:
 //!
 //! - a **gRPC** server exposing each module's `rpc` services,
-//! - an **AMQP consumer** driving each module's `hooks`,
-//! - a **cron executor** running scheduled jobs,
+//! - an **Iggy consumer** driving each module's event `hooks`,
+//! - a **cron executor** running each module's `CronJob`s,
 //! - a **REST/webhook** gateway for third-party callbacks.
 //!
 //! Shipping one binary that can run in several modes keeps deployment uniform

@@ -2,38 +2,91 @@
 //!
 //! Hooks are where a module reacts to things instead of being called directly:
 //!
-//! - **AMQP consumers** — implement `AmqpMessageProcessor<E>` plus
-//!   `Processor<E>` to handle an [`event`](crate::events) delivered from the
-//!   queue.
-//! - **Cron jobs** — periodic tasks (cleanup, aggregation, reconciliation).
+//! - **Iggy event handlers** — implement `wakuwaku::iggy::EventHandler<E>` to
+//!   handle an [`event`](crate::events). A handler receives a *run*: up to
+//!   `MAX_BATCH` events of one key, in order, already reduced by the event's
+//!   algebra. Delivery is at least once, so handlers must be idempotent.
+//! - **Cron jobs** — implement `Processor<CronTick>` plus `wakuwaku::CronJob`
+//!   (with its `INTERVAL`). Every replica runs its own jobs, so make them
+//!   idempotent or take a Redis `Lock`.
 //! - **Event loggers** — persist or forward events for audit/observability.
 //!
-//! Like services, a hook is a `Clone`-able struct that owns its dependencies.
-//! The `app-server` binary wires hooks into its consumer/cron workers.
+//! Like services, a hook is a struct that owns its dependencies and implements
+//! `wakuwaku::ServiceCreation`, so `app-server` can build it from its
+//! `ServiceBuilder` (`.iggy_consumer::<Hook, _, _>()`, `.cron_job::<Job, _>()`).
+//! A hook that needs several dependencies skips `ServiceCreation` and is built
+//! with `.compose_iggy_consumer(..)` / `.compose_cron_job(..)` instead.
+//!
+//! Failures are `HandleError`s; their class decides what the consumer does
+//! (`transient`: retry in place, `retryable`: move the key to the retry topic,
+//! `unrecoverable`: drop and log). [`crate::Error`] converts into one, so `?`
+//! works on service calls.
 //!
 //! ```ignore
-//! use kanau::processor::Processor;
-//! use wakuwaku::amqp::AmqpMessageProcessor;
-//! use wakuwaku::redis::RedisConnection;
+//! use std::num::NonZeroUsize;
+//! use std::time::Duration;
 //!
+//! use kanau::processor::Processor;
+//! use wakuwaku::entity::redis::RedisSource;
+//! use wakuwaku::entity::{Db, ReadWrite};
+//! use wakuwaku::iggy::EventHandler;
+//! use wakuwaku::iggy::error::HandleError;
+//! use wakuwaku::{CronJob, CronJobInterval, CronTick, ServiceCreation};
+//!
+//! use crate::entities::redis::{EXAMPLE_CACHE, ExampleId};
 //! use crate::events::ExampleHappened;
 //!
-//! #[derive(Clone)]
+//! /// Drops the cached example whenever it changes.
 //! pub struct ExampleHook {
-//!     pub redis: RedisConnection,
+//!     redis: Db<RedisSource, ReadWrite>,
 //! }
 //!
-//! // Bind the hook to a durable queue name.
-//! impl AmqpMessageProcessor<ExampleHappened> for ExampleHook {
-//!     const QUEUE: &'static str = "app_base_example";
+//! impl ServiceCreation for ExampleHook {
+//!     type Dep = Db<RedisSource, ReadWrite>;
+//!     fn create_service(redis: Self::Dep) -> Self {
+//!         Self { redis }
+//!     }
 //! }
 //!
-//! impl Processor<ExampleHappened> for ExampleHook {
-//!     type Output = ();
-//!     type Error = wakuwaku::Error;
-//!     async fn process(&self, input: ExampleHappened) -> Result<(), Self::Error> {
-//!         // react to the event...
+//! impl EventHandler<ExampleHappened> for ExampleHook {
+//!     const MAX_BATCH: NonZeroUsize = NonZeroUsize::MIN;
+//!
+//!     #[tracing::instrument(skip_all, err)]
+//!     async fn handle(&self, run: &[ExampleHappened]) -> Result<(), HandleError> {
+//!         for event in run {
+//!             self.redis
+//!                 .process(EXAMPLE_CACHE.remove(&ExampleId(event.id)))
+//!                 .await
+//!                 .map_err(crate::Error::from)?;
+//!         }
 //!         Ok(())
 //!     }
+//! }
+//!
+//! /// A periodic job.
+//! pub struct ExampleCleanup {
+//!     redis: Db<RedisSource, ReadWrite>,
+//! }
+//!
+//! impl ServiceCreation for ExampleCleanup {
+//!     type Dep = Db<RedisSource, ReadWrite>;
+//!     fn create_service(redis: Self::Dep) -> Self {
+//!         Self { redis }
+//!     }
+//! }
+//!
+//! impl Processor<CronTick> for ExampleCleanup {
+//!     type Output = ();
+//!     type Error = crate::Error;
+//!
+//!     #[tracing::instrument(skip_all, err)]
+//!     async fn process(&self, tick: CronTick) -> Result<(), Self::Error> {
+//!         // Read "now" from `tick.fired_at`, so tests control time.
+//!         Ok(())
+//!     }
+//! }
+//!
+//! impl CronJob for ExampleCleanup {
+//!     const INTERVAL: CronJobInterval = CronJobInterval::AtLeast(Duration::from_secs(60));
 //! }
 //! ```

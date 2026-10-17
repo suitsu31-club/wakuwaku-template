@@ -9,6 +9,9 @@ request path.
   [`migrations/`](../../migrations).
 - **Configuration** — seed default config values into the database and refresh
   the Redis cache; validate config JSON.
+- **Iggy topology** — create the app's stream and each module's main topics
+  (named by the partition keys' `SUPER_PARTITION_NAME`) with their partition
+  counts; wakuwaku only creates the `retry_<topic>` topics itself.
 - **Admin accounts** — create, list, and manage administrator accounts.
 - **Maintenance** — one-off data fixes and operational chores.
 
@@ -23,7 +26,7 @@ exact types and queries the server uses.
 ## Conventions
 
 - Build subcommands with a CLI parser (e.g. `clap`).
-- Read connection settings (`DATABASE_URL`, `REDIS_URL`) from flags or the
-  environment.
+- Read connection settings (`DATABASE_URL`, `REDIS_URL`, `IGGY_URL`) from flags
+  or the environment.
 - Reuse module `entities`/`services` rather than issuing ad-hoc SQL, so the tool
   and the server never drift apart.
